@@ -1,0 +1,121 @@
+### SADC Order Management: example requests
+### Works with the VS Code REST Client extension, Visual Studio 2022 and JetBrains Rider.
+### Run the requests top to bottom: later requests reuse values captured by earlier ones.
+
+# Visual Studio / dotnet run (http profile). For Docker Compose use http://localhost:5080
+@baseUrl = http://localhost:5059
+
+### 0. Health and reference data (anonymous)
+GET {{baseUrl}}/healthz
+
+###
+GET {{baseUrl}}/readiness
+
+###
+GET {{baseUrl}}/api/reference/sadc-countries
+
+### 1. Get a mock token (Auth:Mode = Mock only). Roles: Orders.Read, Orders.Write, Orders.Admin
+# @name token
+POST {{baseUrl}}/api/dev/token
+Content-Type: application/json
+
+{ "roles": ["Orders.Read", "Orders.Write", "Orders.Admin"] }
+
+###
+@auth = Bearer {{token.response.body.accessToken}}
+
+### 2. Create a customer (201 + Location)
+# @name customer
+POST {{baseUrl}}/api/customers
+Authorization: {{auth}}
+Content-Type: application/json
+X-Correlation-ID: demo-create-customer-001
+
+{ "name": "Tendai Moyo", "email": "tendai.{{$randomInt 1000 99999}}@example.zw", "countryCode": "ZW" }
+
+###
+@customerId = {{customer.response.body.id}}
+
+### 3. Validation error: non-SADC country -> 400 with errors.countryCode
+POST {{baseUrl}}/api/customers
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "name": "Amara", "email": "amara@example.ke", "countryCode": "KE" }
+
+### 4. Get / search customers (pageSize <= 100)
+GET {{baseUrl}}/api/customers/{{customerId}}
+Authorization: {{auth}}
+
+###
+GET {{baseUrl}}/api/customers?search=moyo&page=1&pageSize=10
+Authorization: {{auth}}
+
+### 5. Create an order (ZW allows ZWL, USD and ZWG). The server computes TotalAmount and OrderCreated goes to the outbox.
+# @name order
+POST {{baseUrl}}/api/orders
+Authorization: {{auth}}
+Content-Type: application/json
+
+{
+  "customerId": "{{customerId}}",
+  "currencyCode": "USD",
+  "lineItems": [
+    { "productSku": "SOLAR-LAMP", "quantity": 3, "unitPrice": 24.99 },
+    { "productSku": "SEED-PACK", "quantity": 10, "unitPrice": 3.10 }
+  ]
+}
+
+###
+@orderId = {{order.response.body.id}}
+
+### 6. Currency not allowed for the customer's country -> 400 errors.currencyCode
+POST {{baseUrl}}/api/orders
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "customerId": "{{customerId}}", "currencyCode": "ZAR", "lineItems": [ { "productSku": "X", "quantity": 1, "unitPrice": 1 } ] }
+
+### 7. Get the order. Copy the ETag into If-None-Match and send again to get 304.
+# @name getOrder
+GET {{baseUrl}}/api/orders/{{orderId}}
+Authorization: {{auth}}
+
+###
+GET {{baseUrl}}/api/orders/{{orderId}}
+Authorization: {{auth}}
+If-None-Match: {{getOrder.response.headers.ETag}}
+
+### 8. List orders: filter, sort, paginate
+GET {{baseUrl}}/api/orders?customerId={{customerId}}&status=Pending&sort=-totalAmount&page=1&pageSize=20
+Authorization: {{auth}}
+
+### 9. Idempotent status change. Send it twice: the second response has "Idempotent-Replayed: true".
+# (The worker may already have fulfilled the order. If so you get a 409 with allowedTransitions.)
+PUT {{baseUrl}}/api/orders/{{orderId}}/status
+Authorization: {{auth}}
+Content-Type: application/json
+Idempotency-Key: 4b1d1c9e-demo-key-0001
+
+{ "status": "Cancelled" }
+
+### 10. Same key, different body -> 422 idempotency_key_reused
+PUT {{baseUrl}}/api/orders/{{orderId}}/status
+Authorization: {{auth}}
+Content-Type: application/json
+Idempotency-Key: 4b1d1c9e-demo-key-0001
+
+{ "status": "Paid" }
+
+### 11. Missing Idempotency-Key -> 400
+PUT {{baseUrl}}/api/orders/{{orderId}}/status
+Authorization: {{auth}}
+Content-Type: application/json
+
+{ "status": "Paid" }
+
+### 12. No token -> 401 Problem Details
+GET {{baseUrl}}/api/orders
+
+### 13. Basic metrics
+GET {{baseUrl}}/metrics

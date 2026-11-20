@@ -1,0 +1,10 @@
+<Solution>
+  <Project Path="Core/Core.csproj" />
+  <Project Path="DataLayer/DataLayer.csproj" />
+  <Project Path="Domain/Domain.csproj" />
+  <Project Path="LogicLayer/LogicLayer.csproj" />
+  <Project Path="SadcOrdersAssessment.IntegrationTests/SadcOrdersAssessment.IntegrationTests.csproj" />
+  <Project Path="SadcOrdersAssessment/SadcOrdersAssessment.csproj" />
+  <Project Path="SadcOrdersAssessment.Worker/SadcOrdersAssessment.Worker.csproj" />
+  <Project Path="UnitTest/UnitTest.csproj" />
+</Solution>
