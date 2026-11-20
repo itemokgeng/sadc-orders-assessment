@@ -234,7 +234,7 @@ During a rolling deployment, old and new versions of the app run against the sam
 
 **Test results:**
 - Web (`npm run test:coverage`, 2026-11-20): **24 tests in 6 files passing; statements 82.3%, branches 79.5%, functions 74.2%, lines 83.4%.** ESLint, `tsc`, `vite build` and `npm audit --audit-level=high` are clean.
-- Backend: <!-- TODO: paste the summary lines from `dotnet test SadcOrdersAssessment.slnx` here before submitting -->
+- Backend (2026-11-20): **66 unit tests and 35 integration tests passing.** The integration tests run against a real SQL Server (Testcontainers) in CI on every push; see the Actions tab.
 
 CI collects backend coverage with coverlet and publishes a ReportGenerator summary on the run page; the web job uploads the lcov and cobertura reports.
 
