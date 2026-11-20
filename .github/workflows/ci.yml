@@ -106,7 +106,8 @@ jobs:
         run: |
           SQL_CONTAINER=${{ job.services.sqlserver.id }}
           docker cp artifacts/sql/migrate-idempotent.sql "$SQL_CONTAINER":/tmp/migrate.sql
-          SQLCMD="docker exec $SQL_CONTAINER /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P $CI_SA_PASSWORD -b"
+          # -I turns QUOTED_IDENTIFIER on (sqlcmd defaults it off); filtered indexes need it.
+          SQLCMD="docker exec $SQL_CONTAINER /opt/mssql-tools18/bin/sqlcmd -C -I -S localhost -U sa -P $CI_SA_PASSWORD -b"
           $SQLCMD -Q "CREATE DATABASE SadcOrdersScriptCheck"
           $SQLCMD -d SadcOrdersScriptCheck -i /tmp/migrate.sql
           $SQLCMD -d SadcOrdersScriptCheck -i /tmp/migrate.sql
