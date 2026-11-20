@@ -8,9 +8,11 @@ namespace Domain.Enums
 {
     public enum OrderStatus
     {
-        Paid,
+        // Stored as text in the database (HasConversion<string>), so the order here only matters in code.
+        // Pending is first so default(OrderStatus) is Pending, not Paid.
         Pending,
-        Cancelled,
+        Paid,
         Fulfilled,
+        Cancelled,
     }
 }

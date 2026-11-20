@@ -12,8 +12,8 @@ namespace Domain.Common
         public InvalidStatusTransitionException(OrderStatus current, OrderStatus requested) : base
             ($"Invalid status transition from {current} to {requested}")
         {
-            current = current;
-            requested = requested;
+            Current = current;
+            Requested = requested;
         }
 
         public OrderStatus Current { get; }
