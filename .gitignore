@@ -1,0 +1,32 @@
+# .NET
+bin/
+obj/
+*.user
+*.suo
+.vs/
+TestResults/
+artifacts/
+*.trx
+coverage*.xml
+
+# Node
+node_modules/
+SadcOrdersAssessmentFrontend/dist/
+SadcOrdersAssessmentFrontend/coverage/
+playwright-report/
+test-results/
+
+# IDE / OS
+.idea/
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.DS_Store
+Thumbs.db
+
+# Log files (Serilog)
+logs/
+
+# Local env
+*.env.local
+.env
