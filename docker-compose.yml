@@ -1,0 +1,101 @@
+# Full local stack: SQL Server, RabbitMQ, API, worker and web.
+#   docker compose up --build
+# Web: http://localhost:8080   API/Swagger: http://localhost:5080/swagger   RabbitMQ UI: http://localhost:15672 (guest/guest)
+name: sadc-orders
+
+x-sql-password: &sql-password "Your_strong_Passw0rd!"
+x-db-connection: &db-connection "Server=sqlserver,1433;Database=SadcOrders;User Id=sa;Password=Your_strong_Passw0rd!;TrustServerCertificate=True"
+
+services:
+  sqlserver:
+    image: mcr.microsoft.com/mssql/server:2022-latest
+    environment:
+      ACCEPT_EULA: "Y"
+      MSSQL_SA_PASSWORD: *sql-password
+      MSSQL_PID: Developer
+    ports:
+      - "1433:1433"
+    volumes:
+      - sqldata:/var/opt/mssql
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P \"$$MSSQL_SA_PASSWORD\" -Q 'SELECT 1' -b -o /dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 20s
+
+  rabbitmq:
+    image: rabbitmq:3.13-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitdata:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+
+  api:
+    build:
+      context: ./SadcOrdersAssessment
+      dockerfile: SadcOrdersAssessment/Dockerfile
+    environment:
+      ASPNETCORE_ENVIRONMENT: Development
+      ConnectionStrings__OrdersDb: *db-connection
+      RabbitMq__HostName: rabbitmq
+      Auth__Mode: Mock
+      Auth__Mock__SigningKey: compose-only-signing-key-0123456789abcdef
+      Database__MigrateOnStartup: "true"
+      Seed__Enabled: "true"
+      Swagger__Enabled: "true"
+    ports:
+      - "5080:8080"
+    volumes:
+      - ./logs/api:/app/logs   # rolling log files: logs/api/api-YYYYMMDD.log on your machine
+    depends_on:
+      sqlserver:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      # The aspnet image has no curl; bash's /dev/tcp is enough for a liveness probe.
+      test: ["CMD-SHELL", "bash -c 'exec 3<>/dev/tcp/127.0.0.1/8080 && printf \"GET /healthz HTTP/1.0\\r\\n\\r\\n\" >&3 && grep -q \" 200 \" <&3'"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+
+  worker:
+    build:
+      context: ./SadcOrdersAssessment
+      dockerfile: SadcOrdersAssessment.Worker/Dockerfile
+    environment:
+      DOTNET_ENVIRONMENT: Development
+      ConnectionStrings__OrdersDb: *db-connection
+      RabbitMq__HostName: rabbitmq
+      Worker__SimulatedProcessingDelayMs: "1500"
+      Worker__SimulatedFailureRate: "0"
+    volumes:
+      - ./logs/worker:/app/logs   # rolling log files: logs/worker/worker-YYYYMMDD.log on your machine
+    depends_on:
+      api:
+        condition: service_healthy # the API applies the migrations
+      rabbitmq:
+        condition: service_healthy
+    deploy:
+      replicas: 1
+
+  web:
+    build:
+      context: ./SadcOrdersAssessmentFrontend
+    ports:
+      - "8080:8080"
+    depends_on:
+      api:
+        condition: service_healthy
+
+volumes:
+  sqldata:
+  rabbitdata:

@@ -1,0 +1,202 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  DOTNET_NOLOGO: true
+  DOTNET_CLI_TELEMETRY_OPTOUT: true
+  CI_SA_PASSWORD: Ci_Strong_Passw0rd!
+
+jobs:
+  backend:
+    name: API & Worker (restore → lint → build → test → migrations)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: SadcOrdersAssessment
+    services:
+      # Empty SQL Server, used to check that the generated migration script and the Down
+      # migrations run cleanly. (The integration tests start their own server via Testcontainers.)
+      sqlserver:
+        image: mcr.microsoft.com/mssql/server:2022-latest
+        env:
+          ACCEPT_EULA: "Y"
+          MSSQL_SA_PASSWORD: Ci_Strong_Passw0rd! # must match env.CI_SA_PASSWORD
+        ports:
+          - 1433:1433
+        options: >-
+          --health-cmd "/opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P Ci_Strong_Passw0rd! -Q 'SELECT 1' -b -o /dev/null"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 15
+    steps:
+      - uses: actions/checkout@v4
+
+      # The projects target net8.0. The .slnx solution format needs the .NET 9 SDK (9.0.200+) to build.
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: |
+            8.0.x
+            9.0.x
+
+      - name: Restore
+        run: |
+          dotnet tool install --global dotnet-ef --version 8.*
+          dotnet restore SadcOrdersAssessment.slnx
+
+      - name: Lint (dotnet format)
+        run: dotnet format SadcOrdersAssessment.slnx --verify-no-changes --no-restore
+
+      - name: Build
+        run: dotnet build SadcOrdersAssessment.slnx -c Release --no-restore
+
+      - name: Vulnerable package check
+        run: |
+          dotnet list SadcOrdersAssessment.slnx package --vulnerable --include-transitive | tee vulnerable.txt
+          if grep -q -i "has the following vulnerable packages" vulnerable.txt; then echo "::error::Vulnerable NuGet packages found"; exit 1; fi
+
+      - name: Unit tests
+        run: >
+          dotnet test UnitTest -c Release --no-build
+          --logger "trx;LogFileName=unit.trx" --results-directory artifacts/test-results
+          --collect:"XPlat Code Coverage"
+
+      - name: Integration tests (Testcontainers SQL Server)
+        run: >
+          dotnet test SadcOrdersAssessment.IntegrationTests -c Release --no-build
+          --logger "trx;LogFileName=integration.trx" --results-directory artifacts/test-results
+          --collect:"XPlat Code Coverage"
+
+      - name: Coverage report
+        if: always()
+        uses: danielpalme/ReportGenerator-GitHub-Action@5
+        with:
+          reports: SadcOrdersAssessment/artifacts/test-results/**/coverage.cobertura.xml
+          targetdir: SadcOrdersAssessment/artifacts/coverage
+          reporttypes: HtmlInline;MarkdownSummaryGithub;Cobertura
+          classfilters: "-*.Migrations.*"
+
+      - name: Publish coverage summary
+        if: always()
+        run: cat artifacts/coverage/SummaryGithub.md >> "$GITHUB_STEP_SUMMARY" || true
+
+      # ---- Migrations: the model and the snapshot agree, the script applies to an empty DB, Down works ----
+      - name: "EF: model has no un-migrated changes"
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+        run: dotnet ef migrations has-pending-model-changes --project DataLayer --startup-project SadcOrdersAssessment --no-build --configuration Release
+
+      - name: "EF: generate idempotent SQL script"
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+        run: |
+          mkdir -p artifacts/sql
+          dotnet ef migrations script --idempotent --project DataLayer --startup-project SadcOrdersAssessment --no-build --configuration Release -o artifacts/sql/migrate-idempotent.sql
+          dotnet ef migrations list --project DataLayer --startup-project SadcOrdersAssessment --no-build --configuration Release --no-connect
+
+      - name: "EF: apply script to an empty database (twice, to prove it is idempotent)"
+        run: |
+          SQL_CONTAINER=${{ job.services.sqlserver.id }}
+          docker cp artifacts/sql/migrate-idempotent.sql "$SQL_CONTAINER":/tmp/migrate.sql
+          SQLCMD="docker exec $SQL_CONTAINER /opt/mssql-tools18/bin/sqlcmd -C -S localhost -U sa -P $CI_SA_PASSWORD -b"
+          $SQLCMD -Q "CREATE DATABASE SadcOrdersScriptCheck"
+          $SQLCMD -d SadcOrdersScriptCheck -i /tmp/migrate.sql
+          $SQLCMD -d SadcOrdersScriptCheck -i /tmp/migrate.sql
+          $SQLCMD -d SadcOrdersScriptCheck -Q "SET NOCOUNT ON; SELECT MigrationId FROM __EFMigrationsHistory ORDER BY MigrationId; EXEC dbo.sp_GetTransactionReport '2026-01-01', '2026-12-31';"
+
+      - name: "EF: rollback round-trip (update → down to 0 → up again)"
+        env:
+          ASPNETCORE_ENVIRONMENT: Development
+          SADC_ORDERS_DB: Server=localhost,1433;Database=SadcOrdersRollbackCheck;User Id=sa;Password=${{ env.CI_SA_PASSWORD }};TrustServerCertificate=True
+        run: |
+          EF="dotnet ef database update --project DataLayer --startup-project SadcOrdersAssessment --no-build --configuration Release"
+          $EF
+          $EF AddOrderRowVersion
+          $EF 0
+          $EF
+
+      - name: Publish API & Worker
+        run: |
+          dotnet publish SadcOrdersAssessment -c Release --no-build -o artifacts/publish/api
+          dotnet publish SadcOrdersAssessment.Worker -c Release --no-build -o artifacts/publish/worker
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: backend-test-results
+          path: |
+            SadcOrdersAssessment/artifacts/test-results
+            SadcOrdersAssessment/artifacts/coverage
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: migration-sql
+          path: SadcOrdersAssessment/artifacts/sql
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: backend-publish
+          path: SadcOrdersAssessment/artifacts/publish
+
+  frontend:
+    name: Web (install → lint → typecheck → test → build)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: SadcOrdersAssessmentFrontend
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: SadcOrdersAssessmentFrontend/package-lock.json
+      - run: npm ci
+      - name: Lint
+        run: npm run lint
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Dependency audit
+        run: npm audit --audit-level=high
+      - name: Component tests with coverage
+        run: npm run test:coverage
+      - name: Build
+        run: npm run build
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: web-coverage
+          path: SadcOrdersAssessmentFrontend/coverage
+      - uses: actions/upload-artifact@v4
+        with:
+          name: web-dist
+          path: SadcOrdersAssessmentFrontend/dist
+
+  docker:
+    name: Docker images
+    needs: [backend, frontend]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build images
+        run: docker compose build api worker web
+      - name: Push to GHCR (main only)
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        run: |
+          echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u "${{ github.actor }}" --password-stdin
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          for svc in api worker web; do
+            docker tag "sadc-orders-$svc" "ghcr.io/$OWNER/sadc-orders-$svc:${{ github.sha }}"
+            docker push "ghcr.io/$OWNER/sadc-orders-$svc:${{ github.sha }}"
+          done
