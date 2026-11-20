@@ -6,7 +6,7 @@ using System.Threading.Tasks;
 
 namespace Domain.Common
 {
-    public sealed record SadcCountry(string Code, string Name, IReadOnlyList<string> Currency) 
+    public sealed record SadcCountry(string Code, string Name, IReadOnlyList<string> Currency)
     {
     }
 }

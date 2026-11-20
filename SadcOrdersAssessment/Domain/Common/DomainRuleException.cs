@@ -8,8 +8,8 @@ namespace Domain.Common
 {
     public class DomainRuleException : Exception
     {
-        
-        public DomainRuleException(string field, string message ) : base(message)
+
+        public DomainRuleException(string field, string message) : base(message)
         {
             Field = field;
         }

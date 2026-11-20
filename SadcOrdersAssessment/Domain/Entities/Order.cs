@@ -28,7 +28,7 @@ namespace Domain.Entities
 
         public IReadOnlyCollection<OrderLineItem> LineItems => _lineItems.AsReadOnly();
 
-        
+
         public byte[] RowVersion { get; private set; } = Array.Empty<byte>();
 
         public static Order Create(Guid customerId, string currencyCode, IReadOnlyCollection<NewOrderLine> lines, DateTime createdAtUtc)

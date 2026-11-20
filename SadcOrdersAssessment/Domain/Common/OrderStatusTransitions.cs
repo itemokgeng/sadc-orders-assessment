@@ -11,7 +11,7 @@ namespace Domain.Common
     {
         private static readonly IReadOnlyDictionary<OrderStatus, OrderStatus[]> Allowed = new Dictionary<OrderStatus, OrderStatus[]>
         {
-            [OrderStatus.Pending] =  new [] { OrderStatus.Paid, OrderStatus.Cancelled },
+            [OrderStatus.Pending] = new[] { OrderStatus.Paid, OrderStatus.Cancelled },
             [OrderStatus.Paid] = new[] { OrderStatus.Fulfilled, OrderStatus.Cancelled },
             [OrderStatus.Fulfilled] = Array.Empty<OrderStatus>(),
             [OrderStatus.Cancelled] = Array.Empty<OrderStatus>(),
